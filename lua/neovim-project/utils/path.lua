@@ -1,5 +1,6 @@
 local uv = vim.loop
 local M = {}
+local config = require("neovim-project.config")
 
 M.datapath = vim.fn.stdpath("data") -- directory
 M.projectpath = M.datapath .. "/neovim-project" -- directory
@@ -135,28 +136,95 @@ local function find_closest_parent(directories, subdirectory)
   return closest_parent
 end
 
+-- is_project_dir help to check if the directory is a projectDir with defined by root_patterns
+---@param fullpath string the path to check
+local function is_project_dir(fullpath)
+  local options = config.options
+  local markers = options.root_patterns
+  if not markers or #markers == 0 then
+    -- not use root_patterns case
+    return true
+  end
+  for _, marker in ipairs(markers) do
+    local pattern = vim.fs.joinpath(fullpath, marker)
+    local matches = vim.fn.glob(pattern, true, true, true)
+    for _, m in ipairs(matches) do
+      if vim.fn.isdirectory(m) == 1 or vim.fn.filereadable(m) == 1 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- check if the path is a skip or not, will return true if path is not a directory
+-- or hidden folder
+---@param path string path to check
+local function should_skip(path)
+  local name = vim.fs.basename(path)
+  if vim.fn.isdirectory(path) ~= 1 or name.sub(1, 1) == "." then
+    return true
+  end
+  return false
+end
+
+-- add_to_projects add path to projects
+---@param projects table list of path considered as project root
+---@param fullpath string the fullpath to add to projects
+local function add_to_projects(projects, fullpath)
+  if is_project_dir(fullpath) then
+    local short = M.short_path(fullpath)
+    if not vim.tbl_contains(projects, short) then
+      table.insert(projects, short)
+    end
+  end
+end
+
+-- Recursively scan directories
+---@param root string the path will be consider as root and scan it subdirectory
+---@param projects table list of path considered as project root
+---@param depth number the current depth of scan
+---@param max_depth number the max depth will be check
+local function scan_dirs_recursive(root, projects, depth, max_depth)
+  if depth >= max_depth then
+    return
+  end
+  for name, type in vim.fs.dir(root) do
+    local fullpath = vim.fs.joinpath(root, name)
+    if should_skip(fullpath) then
+      goto continue
+    end
+    add_to_projects(projects, fullpath)
+    scan_dirs_recursive(fullpath, projects, depth + 1, max_depth)
+    ::continue::
+  end
+end
+
 M.get_all_projects = function(patterns)
+  local options = config.options
+  local recursion_max_depth = options.recursion_max_depth
+  local recursion_enabled = options.recursion_scan_enabled
+  patterns = patterns or options.projects
   -- Get all existing projects from patterns
   local projects = {}
-  if patterns == nil then
-    patterns = require("neovim-project.config").options.projects
-  end
   for _, pattern in ipairs(patterns) do
     local tbl = vim.fn.glob(pattern, true, true, true)
     for _, path in ipairs(tbl) do
-      if vim.fn.isdirectory(path) == 1 then
-        local short = M.short_path(path)
-        if not vim.tbl_contains(projects, short) then
-          table.insert(projects, short)
-        end
+      if should_skip(path) then
+        goto continue
       end
+      add_to_projects(projects, path)
+      if recursion_enabled then
+        scan_dirs_recursive(path, projects, 1, recursion_max_depth)
+      end
+      ::continue::
     end
   end
   return projects
 end
 
 function M.init()
-  M.datapath = vim.fn.expand(require("neovim-project.config").options.datapath)
+  M.datapath = vim.fn.expand(config.options.datapath)
   M.projectpath = M.datapath .. "/neovim-project" -- directory
   M.historyfile = M.projectpath .. "/history" -- file
   M.sessionspath = M.datapath .. "/neovim-sessions" --directory
@@ -165,7 +233,7 @@ end
 
 M.get_all_projects_with_sorting = function()
   -- Get all projects but with specific sorting
-  local sorting = require("neovim-project.config").options.picker.opts.sorting
+  local sorting = config.options.picker.opts.sorting
   local all_projects = M.get_all_projects()
 
   -- Sort by most recent projects first
@@ -276,8 +344,8 @@ end
 
 M.fix_symlinks_for_history = function(dirs)
   -- Replace paths with paths from `projects` option
-  local patterns = require("neovim-project.config").options.projects
-  local follow_symlinks = require("neovim-project.config").options.follow_symlinks
+  local patterns = config.options.projects
+  local follow_symlinks = config.options.follow_symlinks
 
   if follow_symlinks == true or follow_symlinks == "full" then
     local projects = M.get_all_projects()
@@ -351,8 +419,8 @@ M.fix_symlinks_for_history = function(dirs)
 end
 
 M.chdir_closest_parent_project = function(dir)
-  local patterns = require("neovim-project.config").options.projects
-  local follow_symlinks = require("neovim-project.config").options.follow_symlinks
+  local patterns = config.options.projects
+  local follow_symlinks = config.options.follow_symlinks
 
   -- returns the parent project and chdir to that parent
   -- if no parent project returns nil

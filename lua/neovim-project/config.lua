@@ -2,6 +2,15 @@ local M = {}
 
 ---@class ProjectOptions
 M.defaults = {
+  -- allow to scan in recursive
+  recursion_scan_enabled = true,
+  recursion_max_depth = 3,
+  -- define how to consider the folder as a valid project directory
+  root_patterns = {
+    ".nvim",
+    ".hx",
+    ".git",
+  },
   -- Project directories
   projects = {
     "~/projects/*",
